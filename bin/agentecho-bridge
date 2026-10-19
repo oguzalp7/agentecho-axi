@@ -1,0 +1,527 @@
+#!/usr/bin/env python3
+"""
+agentecho-bridge — Edge Ecosystem Bridge Daemon & Asynchronous Ingestion Pipeline
+Listens for sync events from the agentecho-axi Chrome Extension, queues directives into .edge/inbox/,
+ingests into tasks-axi, and triggers autonomous Brigade execution.
+"""
+
+import sys
+import os
+import json
+import time
+import signal
+import socket
+import argparse
+import subprocess
+from pathlib import Path
+from http.server import HTTPServer, BaseHTTPRequestHandler
+from typing import Optional, Dict, Any, List
+
+DEFAULT_PORT = 3888
+CONFIG_DIR = Path.home() / ".agentecho"
+PID_FILE = CONFIG_DIR / "bridge.pid"
+LOG_FILE = CONFIG_DIR / "bridge.log"
+ACTIVE_PROJECT_FILE = CONFIG_DIR / "active_project"
+
+
+def ensure_config_dir():
+    CONFIG_DIR.mkdir(parents=True, exist_ok=True)
+
+
+def get_active_project() -> Optional[Path]:
+    if ACTIVE_PROJECT_FILE.exists():
+        try:
+            path_str = ACTIVE_PROJECT_FILE.read_text().strip()
+            p = Path(path_str)
+            if p.is_dir():
+                return p
+        except Exception:
+            pass
+    return None
+
+
+def set_active_project(project_path: Path):
+    ensure_config_dir()
+    ACTIVE_PROJECT_FILE.write_text(str(project_path.resolve()))
+
+
+def find_project_for_filepath(file_path_str: str) -> Optional[Path]:
+    """Attempts to match a source file path (e.g. src/components/Header.tsx) to a project in /home/oguz."""
+    clean_path = file_path_str.split(":")[0].strip()
+    active = get_active_project()
+    if active and (active / clean_path).exists():
+        return active
+
+    cwd = Path.cwd()
+    if (cwd / clean_path).exists():
+        return cwd
+
+    # Search common projects in /home/oguz
+    home = Path.home()
+    for root, dirs, _ in os.walk(str(home)):
+        # Avoid deep inspection
+        depth = root[len(str(home)):].count(os.sep)
+        if depth > 3:
+            dirs.clear()
+            continue
+        if ".git" in dirs:
+            proj = Path(root)
+            if (proj / clean_path).exists():
+                return proj
+
+    return active or cwd
+
+
+def log_message(msg: str):
+    timestamp = time.strftime("%Y-%m-%d %H:%M:%S")
+    formatted = f"[{timestamp}] [agentecho-bridge] {msg}\n"
+    sys.stdout.write(formatted)
+    sys.stdout.flush()
+    try:
+        ensure_config_dir()
+        with open(LOG_FILE, "a", encoding="utf-8") as f:
+            f.write(formatted)
+    except Exception:
+        pass
+
+
+class BridgeHandler(BaseHTTPRequestHandler):
+    server_project: Optional[Path] = None
+
+    def _set_cors_headers(self, status: int = 200, content_type: str = "application/json"):
+        self.send_response(status)
+        self.send_header("Access-Control-Allow-Origin", "*")
+        self.send_header("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
+        self.send_header("Access-Control-Allow-Headers", "Content-Type, Authorization, X-Requested-With")
+        self.send_header("Content-Type", content_type)
+        self.end_headers()
+
+    def do_OPTIONS(self):
+        self._set_cors_headers(200)
+
+    def do_GET(self):
+        if self.path in ("/", "/health", "/status"):
+            active = self.server_project or get_active_project() or Path.cwd()
+            inbox_file = active / ".edge" / "inbox" / "agentecho-queue.json"
+            queue_len = 0
+            if inbox_file.exists():
+                try:
+                    queue_len = len(json.loads(inbox_file.read_text(encoding="utf-8")))
+                except Exception:
+                    pass
+
+            self._set_cors_headers(200)
+            resp = {
+                "status": "online",
+                "service": "agentecho-bridge",
+                "project": str(active),
+                "queue_length": queue_len,
+                "timestamp": int(time.time()),
+            }
+            self.wfile.write(json.dumps(resp, indent=2).encode("utf-8"))
+        else:
+            self._set_cors_headers(404)
+            self.wfile.write(json.dumps({"error": "Not found"}).encode("utf-8"))
+
+    def do_POST(self):
+        if self.path == "/sync":
+            content_length = int(self.headers.get("Content-Length", 0))
+            if content_length == 0:
+                self._set_cors_headers(400)
+                self.wfile.write(json.dumps({"error": "Empty body"}).encode("utf-8"))
+                return
+
+            body = self.rfile.read(content_length).decode("utf-8")
+            try:
+                payload = json.loads(body)
+            except Exception as e:
+                self._set_cors_headers(400)
+                self.wfile.write(json.dumps({"error": f"Invalid JSON: {str(e)}"}).encode("utf-8"))
+                return
+
+            feedbacks: List[Dict[str, Any]] = payload.get("feedbacks", [])
+            page_url = payload.get("url", "")
+            log_message(f"Received sync request with {len(feedbacks)} feedback item(s) from {page_url}")
+
+            if not feedbacks:
+                self._set_cors_headers(200)
+                self.wfile.write(json.dumps({"success": True, "received": 0, "message": "No feedbacks to sync"}).encode("utf-8"))
+                return
+
+            # Determine target project
+            target_proj = self.server_project or get_active_project()
+            if not target_proj:
+                first_fp = feedbacks[0].get("element", {}).get("component", {}).get("filePath", "")
+                if first_fp:
+                    target_proj = find_project_for_filepath(first_fp)
+            if not target_proj:
+                target_proj = Path.cwd()
+
+            # Store in target project inbox
+            inbox_dir = target_proj / ".edge" / "inbox"
+            inbox_dir.mkdir(parents=True, exist_ok=True)
+            queue_file = inbox_dir / "agentecho-queue.json"
+            history_file = inbox_dir / "agentecho-history.jsonl"
+
+            existing_queue = []
+            if queue_file.exists():
+                try:
+                    existing_queue = json.loads(queue_file.read_text(encoding="utf-8"))
+                except Exception:
+                    existing_queue = []
+
+            for item in feedbacks:
+                item["_synced_at"] = int(time.time())
+                item["_source_url"] = page_url
+                existing_queue.append(item)
+
+                # Append to history log
+                with open(history_file, "a", encoding="utf-8") as hf:
+                    hf.write(json.dumps(item, ensure_ascii=False) + "\n")
+
+            queue_file.write_text(json.dumps(existing_queue, indent=2, ensure_ascii=False), encoding="utf-8")
+            log_message(f"Queued {len(feedbacks)} item(s) into {queue_file} (Total in queue: {len(existing_queue)})")
+
+            # Immediate response to client so browser can drain and clear screen instantly
+            self._set_cors_headers(200)
+            response_payload = {
+                "success": True,
+                "received": len(feedbacks),
+                "total_queued": len(existing_queue),
+                "project": str(target_proj),
+                "timestamp": int(time.time()),
+            }
+            self.wfile.write(json.dumps(response_payload).encode("utf-8"))
+
+            # Asynchronously trigger ingestion / conveyor pipeline
+            self.trigger_pipeline_async(target_proj)
+        else:
+            self._set_cors_headers(404)
+            self.wfile.write(json.dumps({"error": "Endpoint not found"}).encode("utf-8"))
+
+    def trigger_pipeline_async(self, project_path: Path):
+        """Spawns an asynchronous ingestion and task dispatcher in background."""
+        script_path = Path(__file__).resolve()
+        cmd = [sys.executable, str(script_path), "ingest", "--project", str(project_path)]
+        try:
+            subprocess.Popen(
+                cmd,
+                stdout=open(LOG_FILE, "a"),
+                stderr=subprocess.STDOUT,
+                cwd=str(project_path),
+                start_new_session=True,
+            )
+            log_message(f"Dispatched background pipeline worker: {' '.join(cmd)}")
+        except Exception as e:
+            log_message(f"Error launching background pipeline: {e}")
+
+    def log_message(self, format, *args):
+        # Override BaseHTTPRequestHandler standard log to use our log_message
+        log_message("%s - - [%s] %s" % (self.client_address[0], self.log_date_time_string(), format % args))
+
+
+def run_server(port: int, project: Optional[Path] = None):
+    BridgeHandler.server_project = project
+    server_address = ("0.0.0.0", port)
+    try:
+        httpd = HTTPServer(server_address, BridgeHandler)
+    except OSError as e:
+        log_message(f"Failed to bind to port {port}: {e}")
+        sys.exit(1)
+
+    ensure_config_dir()
+    PID_FILE.write_text(str(os.getpid()))
+
+    log_message(f"agentecho-bridge listening on http://localhost:{port} (PID: {os.getpid()})")
+    if project:
+        log_message(f"Bound to project: {project}")
+
+    try:
+        httpd.serve_forever()
+    except KeyboardInterrupt:
+        log_message("Received shutdown signal. Stopping server.")
+    finally:
+        httpd.server_close()
+        if PID_FILE.exists():
+            PID_FILE.unlink(missing_ok=True)
+
+
+def ingest_queue(project_path: Path):
+    """Processes items from .edge/inbox/agentecho-queue.json into tasks-axi tickets."""
+    inbox_file = project_path / ".edge" / "inbox" / "agentecho-queue.json"
+    if not inbox_file.exists():
+        log_message(f"No queue file found at {inbox_file}")
+        return
+
+    try:
+        queue = json.loads(inbox_file.read_text(encoding="utf-8"))
+    except Exception as e:
+        log_message(f"Failed to read queue file {inbox_file}: {e}")
+        return
+
+    if not queue:
+        log_message("Queue is empty. Nothing to ingest.")
+        return
+
+    log_message(f"Starting ingestion of {len(queue)} feedback item(s) for project {project_path}")
+    specs_dir = project_path / ".edge" / "specs"
+    specs_dir.mkdir(parents=True, exist_ok=True)
+
+    remaining_queue = []
+    created_tickets = []
+
+    for item in queue:
+        feedback_id = item.get("id", "unknown")
+        action = item.get("action", "modify").lower()
+        component_name = item.get("element", {}).get("component", {}).get("name", "UnknownComponent")
+        file_path = item.get("element", {}).get("component", {}).get("filePath", "unknown")
+        comment = item.get("comment", "").strip() or ("Remove component" if action == "remove" else "Modify component")
+        selector = item.get("element", {}).get("selector", "")
+
+        # Clean component name for slug
+        safe_comp = "".join(c for c in component_name if c.isalnum() or c in ("-", "_")).lower() or "elem"
+        short_id = feedback_id[:6]
+        slug = f"ae-{action}-{safe_comp}-{short_id}"
+
+        # 1. Write formal Spec contract under .edge/specs/<slug>.md
+        spec_content = f"""# 🎯 AXI-FEEDBACK DIRECTIVE: `{slug}`
+
+- **Action:** `{action.upper()}`
+- **Target Component:** `{component_name}`
+- **Source File:** `{file_path}`
+- **Selector:** `{selector}`
+- **Feedback ID:** `{feedback_id}`
+- **Timestamp:** {time.strftime('%Y-%m-%d %H:%M:%S')}
+
+---
+
+## 📝 User Directive / STT Notu
+> {comment}
+
+---
+
+## 🛡️ Acceptance Criteria (Kabul Şartları)
+{'''1. İlgili JSX/TSX bloğunu ve alt çocuklarını (children) tamamen kaldır.
+2. Sadece bu bileşenin kullandığı yetim import'ları, state ve handler'ları temizle.
+3. `tsc --noEmit` ve proje testlerinin hatasız geçtiğini doğrula.
+''' if action == 'remove' else '''1. Kullanıcının talep ettiği stil, metin veya davranış değişikliğini uygula.
+2. Mevcut mimari sözleşmeleri ve tip tanımlarını koru.
+3. `tsc --noEmit` ve proje testlerinin hatasız geçtiğini doğrula.
+'''}
+## 🚫 Negative Constraints (Yapılmaması Gerekenler)
+- Ana çalışma ağacında doğrudan değişiklik yapma; izole Treehouse worktree kullan.
+- İlgisiz dosya veya bileşenlere dokunma.
+- Tip denetimlerini veya linter kurallarını gevşetme.
+"""
+        spec_path = specs_dir / f"{slug}.md"
+        spec_path.write_text(spec_content, encoding="utf-8")
+
+        # 2. Add to tasks-axi
+        kind = "refactor" if action == "remove" else "feature"
+        title = f"[{action.upper()}] <{component_name} />: {comment[:60]}"
+        cmd = ["tasks-axi", "add", slug, title, "--kind", kind, "--start"]
+
+        log_message(f"Adding tasks-axi ticket: {' '.join(cmd)}")
+        try:
+            res = subprocess.run(cmd, cwd=str(project_path), capture_output=True, text=True)
+            if res.returncode == 0:
+                log_message(f"Created ticket: {slug}")
+                created_tickets.append(slug)
+            else:
+                log_message(f"tasks-axi error ({res.returncode}): {res.stderr.strip()}")
+                remaining_queue.append(item)
+        except FileNotFoundError:
+            log_message("tasks-axi binary not found on PATH. Falling back to specs only.")
+            created_tickets.append(slug)
+        except Exception as e:
+            log_message(f"Failed to add tasks-axi ticket {slug}: {e}")
+            remaining_queue.append(item)
+
+    # Update queue file with any failures, or empty it
+    inbox_file.write_text(json.dumps(remaining_queue, indent=2, ensure_ascii=False), encoding="utf-8")
+    log_message(f"Ingestion completed. {len(created_tickets)} ticket(s) created, {len(remaining_queue)} remaining in queue.")
+
+    # 3. Trigger autonomous agy or orchestrator worker if tickets were created
+    if created_tickets:
+        trigger_agy_orchestrator(project_path, created_tickets)
+
+
+def trigger_agy_orchestrator(project_path: Path, tickets: List[str]):
+    """Optionally spawns agy to execute the newly created tickets."""
+    ticket_list_str = ", ".join(tickets)
+    prompt = f"agentecho-axi montaj hattı: {len(tickets)} yeni bilet oluşturuldu ({ticket_list_str}). tasks-axi ready kuyruğundaki bu biletleri Brigade istasyonlarıyla sırayla erit."
+    cmd = ["agy", "--agent", "edge-orchestrator", "--dangerously-skip-permissions", "-p", prompt]
+
+    log_message(f"Spawning agy orchestrator: {' '.join(cmd)}")
+    try:
+        subprocess.Popen(
+            cmd,
+            stdout=open(LOG_FILE, "a"),
+            stderr=subprocess.STDOUT,
+            cwd=str(project_path),
+            start_new_session=True,
+        )
+    except FileNotFoundError:
+        log_message("agy binary not found on PATH. Tickets remain in tasks-axi ready queue for manual pickup.")
+    except Exception as e:
+        log_message(f"Error starting agy: {e}")
+
+
+def cmd_start(args):
+    ensure_config_dir()
+    port = args.port or DEFAULT_PORT
+    project = Path(args.project).resolve() if args.project else get_active_project() or Path.cwd()
+    set_active_project(project)
+
+    # Check if already running
+    if PID_FILE.exists():
+        try:
+            pid = int(PID_FILE.read_text().strip())
+            os.kill(pid, 0)
+            print(f"agentecho-bridge is already running (PID: {pid}).")
+            return
+        except OSError:
+            PID_FILE.unlink(missing_ok=True)
+
+    if args.foreground:
+        run_server(port, project)
+    else:
+        # Spawn as daemon process
+        cmd = [sys.executable, str(Path(__file__).resolve()), "_serve", "--port", str(port), "--project", str(project)]
+        proc = subprocess.Popen(
+            cmd,
+            stdout=open(LOG_FILE, "a"),
+            stderr=subprocess.STDOUT,
+            start_new_session=True,
+        )
+        print(f"🚀 agentecho-bridge started in background (PID: {proc.pid})")
+        print(f"📡 Listening on http://localhost:{port}")
+        print(f"📁 Active Project: {project}")
+        print(f"📜 Logs: {LOG_FILE}")
+
+
+def cmd_stop(_args):
+    if not PID_FILE.exists():
+        print("agentecho-bridge is not running.")
+        return
+
+    try:
+        pid = int(PID_FILE.read_text().strip())
+        os.kill(pid, signal.SIGTERM)
+        print(f"Sent termination signal to PID {pid}.")
+        # Wait up to 3 seconds for shutdown
+        for _ in range(30):
+            try:
+                os.kill(pid, 0)
+                time.sleep(0.1)
+            except OSError:
+                break
+        print("agentecho-bridge stopped successfully.")
+    except Exception as e:
+        print(f"Error stopping bridge: {e}")
+    finally:
+        PID_FILE.unlink(missing_ok=True)
+
+
+def cmd_status(_args):
+    if not PID_FILE.exists():
+        print("Status: 🔴 STOPPED")
+        active = get_active_project()
+        if active:
+            print(f"Last Active Project: {active}")
+        return
+
+    try:
+        pid = int(PID_FILE.read_text().strip())
+        os.kill(pid, 0)
+        print(f"Status: 🟢 RUNNING (PID: {pid})")
+        active = get_active_project()
+        print(f"Active Project: {active}")
+        if active:
+            inbox = active / ".edge" / "inbox" / "agentecho-queue.json"
+            if inbox.exists():
+                try:
+                    q = json.loads(inbox.read_text(encoding="utf-8"))
+                    print(f"Queue: {len(q)} pending feedback item(s)")
+                except Exception:
+                    print("Queue: [Error reading queue file]")
+            else:
+                print("Queue: 0 items (clean)")
+    except OSError:
+        print("Status: 🔴 STALE PID (Process not alive)")
+        PID_FILE.unlink(missing_ok=True)
+
+
+def cmd_logs(args):
+    if not LOG_FILE.exists():
+        print(f"Log file {LOG_FILE} does not exist yet.")
+        return
+    lines = args.lines or 50
+    try:
+        subprocess.run(["tail", f"-n{lines}", "-f", str(LOG_FILE)])
+    except KeyboardInterrupt:
+        pass
+
+
+def main():
+    parser = argparse.ArgumentParser(prog="agentecho-bridge", description="Edge Ecosystem Bridge Daemon for agentecho-axi")
+    subparsers = parser.add_subparsers(dest="command")
+
+    # start
+    p_start = subparsers.add_parser("start", help="Start the bridge daemon")
+    p_start.add_argument("--port", type=int, default=DEFAULT_PORT, help=f"Port to listen on (default: {DEFAULT_PORT})")
+    p_start.add_argument("--project", type=str, help="Target project root directory")
+    p_start.add_argument("-f", "--foreground", action="store_true", help="Run in foreground instead of daemonizing")
+
+    # _serve (internal)
+    p_serve = subparsers.add_parser("_serve", help=argparse.SUPPRESS)
+    p_serve.add_argument("--port", type=int, default=DEFAULT_PORT)
+    p_serve.add_argument("--project", type=str)
+
+    # stop
+    subparsers.add_parser("stop", help="Stop the bridge daemon")
+
+    # status
+    subparsers.add_parser("status", help="Check bridge status and queue length")
+
+    # logs
+    p_logs = subparsers.add_parser("logs", help="Follow bridge logs")
+    p_logs.add_argument("-n", "--lines", type=int, default=50, help="Number of initial lines")
+
+    # set-project
+    p_proj = subparsers.add_parser("set-project", help="Configure default active project directory")
+    p_proj.add_argument("path", type=str, help="Absolute path to target project")
+
+    # ingest
+    p_ingest = subparsers.add_parser("ingest", help="Process pending queue items into tasks-axi")
+    p_ingest.add_argument("--project", type=str, help="Project directory")
+
+    args = parser.parse_args()
+
+    if args.command == "start":
+        cmd_start(args)
+    elif args.command == "_serve":
+        proj = Path(args.project).resolve() if args.project else None
+        run_server(args.port, proj)
+    elif args.command == "stop":
+        cmd_stop(args)
+    elif args.command == "status":
+        cmd_status(args)
+    elif args.command == "logs":
+        cmd_logs(args)
+    elif args.command == "set-project":
+        p = Path(args.path).resolve()
+        if not p.is_dir():
+            print(f"Error: {p} is not a valid directory.")
+            sys.exit(1)
+        set_active_project(p)
+        print(f"Active project set to: {p}")
+    elif args.command == "ingest":
+        proj = Path(args.project).resolve() if args.project else get_active_project() or Path.cwd()
+        ingest_queue(proj)
+    else:
+        parser.print_help()
+
+
+if __name__ == "__main__":
+    main()
