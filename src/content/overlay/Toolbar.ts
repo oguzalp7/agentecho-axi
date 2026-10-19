@@ -63,6 +63,19 @@ const TOOLBAR_STYLES = `
     height: 24px;
     background: #4b5563;
   }
+
+  @keyframes agentecho-spin {
+    from { transform: rotate(0deg); }
+    to { transform: rotate(360deg); }
+  }
+
+  .agentecho-toolbar-btn.sync {
+    background: #0284c7;
+  }
+
+  .agentecho-toolbar-btn.sync:hover {
+    background: #0369a1;
+  }
 `;
 
 const ICONS = {
@@ -70,6 +83,8 @@ const ICONS = {
   play: `<svg viewBox="0 0 24 24" fill="currentColor"><path d="M8 5v14l11-7z"/></svg>`,
   eye: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>`,
   eyeOff: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M17.94 17.94A10.07 10.07 0 0 1 12 20c-7 0-11-8-11-8a18.45 18.45 0 0 1 5.06-5.94M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19m-6.72-1.07a3 3 0 1 1-4.24-4.24"/><line x1="1" y1="1" x2="23" y2="23"/></svg>`,
+  sync: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4.5 16.5c-1.5 1.26-2 5-2 5s3.74-.5 5-2c.71-.84.7-2.13-.09-2.91a2.18 2.18 0 0 0-2.91-.09z"/><path d="m12 15-3-3a22 22 0 0 1 2-3.95A12.88 12.88 0 0 1 22 2c0 2.72-.78 7.5-6 11a22.35 22.35 0 0 1-4 2z"/><path d="M9 12H4s.55-3.03 2-4c1.62-1.08 5 0 5 0"/><path d="M12 15v5s3.03-.55 4-2c1.08-1.62 0-5 0-5"/></svg>`,
+  spinner: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="animation: agentecho-spin 1s linear infinite"><circle cx="12" cy="12" r="10" stroke-opacity="0.25"/><path d="M12 2a10 10 0 0 1 10 10"/></svg>`,
   copy: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>`,
   check: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="20 6 9 17 4 12"/></svg>`,
   trash: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/><line x1="10" y1="11" x2="10" y2="17"/><line x1="14" y1="11" x2="14" y2="17"/></svg>`,
@@ -80,11 +95,13 @@ export class Toolbar {
   private element: HTMLElement;
   private pauseBtn!: HTMLButtonElement;
   private eyeBtn!: HTMLButtonElement;
+  private syncBtn!: HTMLButtonElement;
   private copyBtn!: HTMLButtonElement;
   private clearBtn!: HTMLButtonElement;
 
   onPauseToggle?: () => void;
   onMarkersToggle?: () => void;
+  onSync?: () => void;
   onCopy?: () => void;
   onClear?: () => void;
   onExit?: () => void;
@@ -168,6 +185,10 @@ export class Toolbar {
     const divider1 = document.createElement('div');
     divider1.className = 'agentecho-toolbar-divider';
 
+    this.syncBtn = this.createButton('sync', '🚀 Sync to Edge (Ajanlara Gönder & Temizle)');
+    this.syncBtn.classList.add('sync');
+    this.syncBtn.onclick = () => this.onSync?.();
+
     this.copyBtn = this.createButton('copy', 'AXI Direktiflerini Kopyala (Copy AXI Directives)');
     this.copyBtn.onclick = () => this.onCopy?.();
 
@@ -183,6 +204,7 @@ export class Toolbar {
     toolbar.appendChild(this.pauseBtn);
     toolbar.appendChild(this.eyeBtn);
     toolbar.appendChild(divider1);
+    toolbar.appendChild(this.syncBtn);
     toolbar.appendChild(this.copyBtn);
     toolbar.appendChild(this.clearBtn);
     toolbar.appendChild(divider2);
@@ -234,6 +256,40 @@ export class Toolbar {
       setTimeout(() => {
         this.clearBtn.style.background = '';
       }, 500);
+    }
+  }
+
+  setSyncLoading(loading: boolean) {
+    if (this.syncBtn) {
+      if (loading) {
+        this.syncBtn.innerHTML = ICONS.spinner;
+        this.syncBtn.disabled = true;
+        this.syncBtn.style.opacity = '0.7';
+      } else {
+        this.syncBtn.innerHTML = ICONS.sync;
+        this.syncBtn.disabled = false;
+        this.syncBtn.style.opacity = '1';
+      }
+    }
+  }
+
+  showSyncSuccess() {
+    if (this.syncBtn) {
+      this.syncBtn.innerHTML = ICONS.check;
+      this.syncBtn.style.background = '#22c55e';
+      setTimeout(() => {
+        this.syncBtn.innerHTML = ICONS.sync;
+        this.syncBtn.style.background = '';
+      }, 2000);
+    }
+  }
+
+  showSyncError() {
+    if (this.syncBtn) {
+      this.syncBtn.style.background = '#ef4444';
+      setTimeout(() => {
+        this.syncBtn.style.background = '';
+      }, 2000);
     }
   }
 }

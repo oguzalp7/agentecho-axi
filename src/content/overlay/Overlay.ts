@@ -259,6 +259,7 @@ export class Overlay {
   private setupToolbarListeners() {
     this.toolbar.onPauseToggle = () => this.togglePause();
     this.toolbar.onMarkersToggle = () => this.toggleMarkers();
+    this.toolbar.onSync = () => this.syncToEdge();
     this.toolbar.onCopy = () => this.copyFeedback();
     this.toolbar.onClear = () => this.clearAll();
     this.toolbar.onExit = () => this.deactivate();
@@ -332,6 +333,56 @@ export class Overlay {
       this.toast.show('👁️ Rozetler görünür yapıldı.', { type: 'info', duration: 1500 });
     } else {
       this.toast.show('👁️ Rozetler gizlendi.', { type: 'info', duration: 1500 });
+    }
+  }
+
+  async syncToEdge() {
+    const items = this.feedbackManager.getAll();
+    if (items.length === 0) {
+      this.toast.show('⚠️ Gönderilecek herhangi bir feedback bulunamadı.', { type: 'warning', duration: 2500 });
+      return;
+    }
+
+    this.toolbar.setSyncLoading(true);
+    this.toast.show(`🚀 ${items.length} adet feedback Edge Bridge'e aktarılıyor...`, { type: 'info', duration: 3000 });
+
+    try {
+      const payload = {
+        url: window.location.href,
+        timestamp: Date.now(),
+        feedbacks: items,
+      };
+
+      const response = await fetch('http://localhost:3888/sync', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload),
+      });
+
+      if (!response.ok) {
+        throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+      }
+
+      this.toolbar.setSyncLoading(false);
+      this.toolbar.showSyncSuccess();
+
+      const count = items.length;
+      // Immediate Drain: wipe storage and markers
+      this.clearAll();
+
+      this.toast.show(`✨ ${count} adet feedback Edge pipeline'ına başarıyla aktarıldı ve ekran temizlendi!`, {
+        type: 'success',
+        duration: 4000,
+      });
+    } catch (err: any) {
+      console.error('[AgentEcho-AXI] Sync failed:', err);
+      this.toolbar.setSyncLoading(false);
+      this.toolbar.showSyncError();
+
+      this.toast.show('⚠️ Edge Bridge (localhost:3888) bağlantısı kurulamadı! Lütfen "agentecho-bridge start" çalıştırın.', {
+        type: 'error',
+        duration: 5000,
+      });
     }
   }
 
