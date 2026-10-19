@@ -4,10 +4,10 @@ export class MarkdownFormatter {
   format(url: string, feedback: FeedbackItem[], settings?: ExtensionSettings): string {
     const detail = settings?.outputDetail || 'standard';
 
-    let markdown = `# AgentEcho Feedback Report\n`;
-    markdown += `**URL:** ${url}\n`;
-    markdown += `**Captured:** ${new Date().toISOString().replace('T', ' ').substring(0, 19)}\n`;
-    markdown += `**Total Items:** ${feedback.length}\n`;
+    let markdown = `# 🎯 AXI-FEEDBACK DIRECTIVES (agentecho-axi)\n`;
+    markdown += `- **URL:** ${url}\n`;
+    markdown += `- **Timestamp:** ${new Date().toISOString().replace('T', ' ').substring(0, 19)}\n`;
+    markdown += `- **Total Directives:** ${feedback.length}\n`;
     markdown += `\n---\n\n`;
 
     for (const item of feedback) {
@@ -19,46 +19,47 @@ export class MarkdownFormatter {
   }
 
   private formatFeedback(item: FeedbackItem, detail: 'minimal' | 'standard' | 'comprehensive'): string {
-    let markdown = `## Feedback #${item.index}\n`;
-    markdown += `> ${item.comment}\n\n`;
-
-    if (item.category) {
-      markdown += `**Category:** ${item.category}\n\n`;
-    }
-
-    markdown += `- **Element:** \`<${item.element.tagName}>\`\n`;
-    markdown += `- **Selector:** \`${item.element.selector}\`\n`;
-
-    if (detail === 'minimal') {
-      return markdown;
-    }
-
-    if (item.element.classes.length > 0) {
-      markdown += `- **Classes:** \`${item.element.classes.join('`, `')}\`\n`;
-    }
-
-    if (item.element.id) {
-      markdown += `- **ID:** \`${item.element.id}\`\n`;
-    }
-
-    if (item.element.textContent) {
-      markdown += `- **Text:** "${item.element.textContent}"\n`;
-    }
+    const action = item.action ? item.action.toUpperCase() : 'MODIFY';
+    let markdown = `### ⚡ [AXI-TASK #${item.index}] ACTION: ${action}\n`;
 
     if (item.element.component) {
       markdown += `- **Component:** \`${item.element.component.name}\` (${item.element.component.framework})\n`;
+      if (item.element.component.filePath) {
+        markdown += `- **Source File:** \`${item.element.component.filePath}\`\n`;
+      }
     }
+
+    markdown += `- **Selector:** \`${item.element.selector}\`\n`;
+    markdown += `- **Action:** \`${action}\`\n`;
+
+    if (item.category) {
+      markdown += `- **Category:** \`${item.category}\`\n`;
+    }
+
+    if (detail !== 'minimal') {
+      if (item.element.textContent) {
+        markdown += `- **Text Content:** "${item.element.textContent.trim().substring(0, 100)}"\n`;
+      }
+      if (item.element.classes.length > 0) {
+        markdown += `- **Classes:** \`${item.element.classes.join('`, `')}\`\n`;
+      }
+      if (item.element.id) {
+        markdown += `- **ID:** \`${item.element.id}\`\n`;
+      }
+    }
+
+    markdown += `\n**Directive:**\n> ${item.comment}\n`;
 
     if (detail === 'comprehensive') {
       if (Object.keys(item.element.dataAttributes).length > 0) {
-        markdown += `- **Data Attributes:**\n`;
+        markdown += `\n**Data Attributes:**\n`;
         for (const [key, value] of Object.entries(item.element.dataAttributes)) {
-          markdown += `  - \`${key}\`: "${value}"\n`;
+          markdown += `- \`${key}\`: "${value}"\n`;
         }
       }
 
       const rect = item.element.boundingRect;
-      markdown += `- **Position:** x=${Math.round(rect.x)}, y=${Math.round(rect.y)}, width=${Math.round(rect.width)}, height=${Math.round(rect.height)}\n`;
+      markdown += `\n- **Bounding Box:** x=${Math.round(rect.x)}, y=${Math.round(rect.y)}, w=${Math.round(rect.width)}, h=${Math.round(rect.height)}\n`;
 
       if (item.element.component?.props) {
         markdown += `- **Component Props:**\n`;

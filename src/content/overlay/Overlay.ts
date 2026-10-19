@@ -165,6 +165,7 @@ export class Overlay {
       id: crypto.randomUUID(),
       index: this.feedbackManager.getAll().length + 1,
       comment: result.comment,
+      action: result.action,
       timestamp: Date.now(),
       url: window.location.href,
       element: elementInfo,
@@ -185,23 +186,23 @@ export class Overlay {
       const placeholder = document.createElement('div');
       placeholder.textContent = 'Element not found';
       this.isModalOpen = true;
-      const result = await this.feedbackModal.show(placeholder, feedback.comment);
+      const result = await this.feedbackModal.show(placeholder, feedback.comment, feedback.action);
       this.isModalOpen = false;
 
       if (result) {
-        this.feedbackManager.update(id, { comment: result.comment });
-        this.markerManager.updateMarkerTooltip(id, result.comment);
+        this.feedbackManager.update(id, { comment: result.comment, action: result.action });
+        this.markerManager.updateMarkerTooltip(id, result.comment, result.action);
       }
       return;
     }
 
     this.isModalOpen = true;
-    const result = await this.feedbackModal.show(element, feedback.comment);
+    const result = await this.feedbackModal.show(element, feedback.comment, feedback.action);
     this.isModalOpen = false;
 
     if (result) {
-      this.feedbackManager.update(id, { comment: result.comment });
-      this.markerManager.updateMarkerTooltip(id, result.comment);
+      this.feedbackManager.update(id, { comment: result.comment, action: result.action });
+      this.markerManager.updateMarkerTooltip(id, result.comment, result.action);
     }
   }
 

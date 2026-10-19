@@ -26,15 +26,55 @@ export class FrameworkDetector {
       try {
         const fiber = (element as unknown as Record<string, unknown>)[fiberKey];
         let componentName = 'Unknown';
+        let filePath: string | undefined;
 
-        if (fiber && typeof fiber === 'object' && 'type' in fiber) {
-          const type = fiber.type as { displayName?: string; name?: string };
-          componentName = type.displayName || type.name || 'Unknown';
+        let current = fiber as Record<string, unknown> | undefined;
+        let foundComposite = false;
+
+        while (current) {
+          // Check _debugSource (injected by React dev JSX transforms)
+          if (!filePath && current._debugSource && typeof current._debugSource === 'object') {
+            const ds = current._debugSource as { fileName?: string; lineNumber?: number; columnNumber?: number };
+            if (ds.fileName && ds.lineNumber) {
+              filePath = `${ds.fileName}:${ds.lineNumber}`;
+            }
+          }
+
+          // Check component type
+          const type = current.type as Record<string, unknown> | ((...args: unknown[]) => unknown) | string | undefined;
+          if (type && typeof type !== 'string') {
+            let name: string | undefined;
+            if (typeof type === 'function') {
+              name = type.name;
+            } else if (typeof type === 'object') {
+              const objType = type as { displayName?: string; name?: string; render?: { displayName?: string; name?: string } };
+              name = objType.displayName || objType.name || objType.render?.displayName || objType.render?.name;
+            }
+
+            if (name && (!foundComposite || componentName === 'Unknown')) {
+              componentName = name;
+              foundComposite = true;
+            }
+          }
+
+          if (foundComposite && filePath) {
+            break;
+          }
+
+          current = current.return as Record<string, unknown> | undefined;
+        }
+
+        if (componentName === 'Unknown' && fiber && typeof fiber === 'object' && 'type' in fiber) {
+          const rawType = (fiber as { type?: unknown }).type;
+          if (typeof rawType === 'string') {
+            componentName = rawType.toUpperCase();
+          }
         }
 
         return {
           framework: 'react',
           name: componentName,
+          filePath,
         };
       } catch {
         return undefined;

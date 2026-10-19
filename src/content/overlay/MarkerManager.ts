@@ -78,6 +78,29 @@ const MARKER_STYLES = (color: string) => `
     pointer-events: all;
   }
 
+  .agentecho-marker-badge {
+    display: inline-block;
+    padding: 2px 6px;
+    border-radius: 4px;
+    font-size: 10px;
+    font-weight: 700;
+    text-transform: uppercase;
+    margin-bottom: 6px;
+    letter-spacing: 0.5px;
+  }
+
+  .agentecho-marker-badge.modify {
+    background: rgba(59, 130, 246, 0.2);
+    color: #60a5fa;
+    border: 1px solid rgba(59, 130, 246, 0.4);
+  }
+
+  .agentecho-marker-badge.remove {
+    background: rgba(239, 68, 68, 0.2);
+    color: #f87171;
+    border: 1px solid rgba(239, 68, 68, 0.4);
+  }
+
   .agentecho-marker-comment {
     color: #f3f4f6;
     font-size: 13px;
@@ -129,7 +152,7 @@ export class MarkerManager {
   private settings: ExtensionSettings;
   private callbacks: MarkerCallbacks;
   private container: HTMLElement;
-  private markers = new Map<string, { element: HTMLElement; commentEl: HTMLElement }>();
+  private markers = new Map<string, { element: HTMLElement; commentEl: HTMLElement; badgeEl: HTMLElement }>();
   private visible = true;
 
   constructor(shadowRoot: ShadowRoot, settings: ExtensionSettings, callbacks: MarkerCallbacks) {
@@ -160,16 +183,23 @@ export class MarkerManager {
     const scrollTop = window.pageYOffset || document.documentElement.scrollTop;
     const scrollLeft = window.pageXOffset || document.documentElement.scrollLeft;
 
+    const isRemove = feedback.action === 'remove';
     const marker = document.createElement('div');
     marker.className = 'agentecho-marker';
     marker.dataset.feedbackId = feedback.id;
     marker.textContent = feedback.index.toString();
     marker.style.top = `${rect.top + scrollTop - 14}px`;
     marker.style.left = `${rect.left + scrollLeft + rect.width / 2 - 14}px`;
+    marker.style.backgroundColor = isRemove ? '#dc2626' : (this.settings.markerColor || '#2563eb');
 
     // Create popup container
     const popup = document.createElement('div');
     popup.className = 'agentecho-marker-popup';
+
+    // Action badge
+    const badgeEl = document.createElement('span');
+    badgeEl.className = `agentecho-marker-badge ${feedback.action || 'modify'}`;
+    badgeEl.textContent = isRemove ? 'REMOVE' : 'MODIFY';
 
     // Comment text
     const commentEl = document.createElement('div');
@@ -200,22 +230,29 @@ export class MarkerManager {
 
     actions.appendChild(editBtn);
     actions.appendChild(deleteBtn);
+    popup.appendChild(badgeEl);
     popup.appendChild(commentEl);
     popup.appendChild(actions);
     marker.appendChild(popup);
 
     this.container.appendChild(marker);
-    this.markers.set(feedback.id, { element: marker, commentEl });
+    this.markers.set(feedback.id, { element: marker, commentEl, badgeEl });
 
     if (!this.visible) {
       marker.classList.add('hidden');
     }
   }
 
-  updateMarkerTooltip(id: string, newComment: string) {
+  updateMarkerTooltip(id: string, newComment: string, action?: 'modify' | 'remove') {
     const markerData = this.markers.get(id);
     if (markerData) {
       markerData.commentEl.textContent = newComment;
+      if (action) {
+        const isRemove = action === 'remove';
+        markerData.element.style.backgroundColor = isRemove ? '#dc2626' : (this.settings.markerColor || '#2563eb');
+        markerData.badgeEl.className = `agentecho-marker-badge ${action}`;
+        markerData.badgeEl.textContent = isRemove ? 'REMOVE' : 'MODIFY';
+      }
     }
   }
 

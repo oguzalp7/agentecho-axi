@@ -4,6 +4,7 @@ export interface FeedbackItem {
   comment: string;
   timestamp: number;
   url: string;
+  action?: 'modify' | 'remove';
   category?: 'bug' | 'improvement' | 'question' | 'design';
   element: ElementInfo;
 }
