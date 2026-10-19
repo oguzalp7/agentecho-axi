@@ -1,11 +1,14 @@
 const HOVER_BOX_STYLES = `
   .agentecho-hover-box {
-    position: absolute;
-    border: 2px solid #3b82f6;
-    background-color: rgba(59, 130, 246, 0.1);
-    pointer-events: none;
-    transition: all 0.1s ease-out;
-    z-index: 2147483646;
+    position: fixed !important;
+    border: 2px solid #3b82f6 !important;
+    background-color: rgba(59, 130, 246, 0.15) !important;
+    pointer-events: none !important;
+    transition: all 0.05s ease-out;
+    z-index: 2147483646 !important;
+    box-sizing: border-box !important;
+    border-radius: 4px;
+    display: none;
   }
 `;
 
@@ -25,9 +28,14 @@ export class HoverBox {
 
   show(target: HTMLElement) {
     if (this.currentElement === target) return;
-
     this.currentElement = target;
     const rect = target.getBoundingClientRect();
+
+    // Guard against zero-size or off-screen elements
+    if (rect.width <= 0 && rect.height <= 0) {
+      this.hide();
+      return;
+    }
 
     this.element.style.top = `${rect.top}px`;
     this.element.style.left = `${rect.left}px`;

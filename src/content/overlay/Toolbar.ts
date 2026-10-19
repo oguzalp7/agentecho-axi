@@ -78,8 +78,6 @@ const ICONS = {
 
 export class Toolbar {
   private element: HTMLElement;
-  private isPaused = false;
-  private markersVisible = true;
 
   onPauseToggle?: () => void;
   onMarkersToggle?: () => void;
@@ -154,14 +152,12 @@ export class Toolbar {
 
     const pauseBtn = this.createButton('pause', 'Pause');
     pauseBtn.onclick = () => {
-      this.togglePause();
       this.onPauseToggle?.();
     };
 
     const eyeBtn = this.createButton('eye', 'Toggle markers');
     eyeBtn.classList.add('active');
     eyeBtn.onclick = () => {
-      this.toggleMarkers();
       this.onMarkersToggle?.();
     };
 
@@ -200,7 +196,6 @@ export class Toolbar {
   }
 
   setPaused(paused: boolean) {
-    this.isPaused = paused;
     const pauseBtn = this.element.querySelector('.agentecho-toolbar-btn:first-child') as HTMLButtonElement;
     if (pauseBtn) {
       pauseBtn.innerHTML = paused ? ICONS.play : ICONS.pause;
@@ -209,7 +204,6 @@ export class Toolbar {
   }
 
   setMarkersVisible(visible: boolean) {
-    this.markersVisible = visible;
     const eyeBtn = this.element.querySelector('.agentecho-toolbar-btn:nth-child(2)') as HTMLButtonElement;
     if (eyeBtn) {
       eyeBtn.innerHTML = visible ? ICONS.eye : ICONS.eyeOff;
@@ -219,14 +213,6 @@ export class Toolbar {
         eyeBtn.classList.remove('active');
       }
     }
-  }
-
-  private togglePause() {
-    this.setPaused(!this.isPaused);
-  }
-
-  private toggleMarkers() {
-    this.setMarkersVisible(!this.markersVisible);
   }
 
   showCopySuccess() {

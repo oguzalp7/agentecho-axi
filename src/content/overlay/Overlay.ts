@@ -8,30 +8,41 @@ import type { FeedbackManager } from '../feedback/FeedbackManager';
 import { sendMessage } from '../../shared/messaging';
 
 const OVERLAY_STYLES = `
-  .agentecho-overlay-container {
-    position: fixed;
-    top: 0;
-    left: 0;
-    width: 100%;
-    height: 100%;
-    pointer-events: none;
-    z-index: 2147483647;
+  :host {
+    position: fixed !important;
+    top: 0 !important;
+    left: 0 !important;
+    width: 100vw !important;
+    height: 100vh !important;
+    pointer-events: none !important;
+    z-index: 2147483647 !important;
+    display: block !important;
   }
 
-  .agentecho-overlay-container.blocking {
-    pointer-events: all;
-    cursor: crosshair;
+  :host(.blocking) {
+    pointer-events: all !important;
+    cursor: crosshair !important;
+  }
+
+  .agentecho-overlay-container {
+    position: fixed !important;
+    top: 0 !important;
+    left: 0 !important;
+    width: 100vw !important;
+    height: 100vh !important;
+    pointer-events: none !important;
+    z-index: 2147483647 !important;
   }
 
   .agentecho-block-overlay {
-    position: fixed;
-    top: 0;
-    left: 0;
-    width: 100%;
-    height: 100%;
-    background: transparent;
-    pointer-events: all;
-    z-index: 2147483640;
+    position: fixed !important;
+    top: 0 !important;
+    left: 0 !important;
+    width: 100vw !important;
+    height: 100vh !important;
+    background: transparent !important;
+    pointer-events: all !important;
+    z-index: 2147483640 !important;
   }
 `;
 
@@ -58,6 +69,7 @@ export class Overlay {
 
     this.container = document.createElement('div');
     this.container.className = 'agentecho-overlay-container';
+    this.container.style.cssText = 'position: fixed !important; top: 0 !important; left: 0 !important; width: 100vw !important; height: 100vh !important; pointer-events: none !important; z-index: 2147483647 !important; display: block !important;';
     this.shadowRoot = this.container.attachShadow({ mode: 'open' });
 
     const style = document.createElement('style');
@@ -73,7 +85,6 @@ export class Overlay {
     this.feedbackModal = new FeedbackModal(this.shadowRoot);
     this.elementAnalyzer = new ElementAnalyzer();
 
-    this.setupEventListeners();
     this.setupToolbarListeners();
     this.loadExistingMarkers();
 
@@ -84,34 +95,39 @@ export class Overlay {
   }
 
   private setupEventListeners() {
-    document.addEventListener('mousemove', this.handleMouseMove);
+    this.removeEventListeners();
+    document.addEventListener('mousemove', this.handleMouseMove, true);
     document.addEventListener('click', this.handleClick, true);
   }
 
   private removeEventListeners() {
-    document.removeEventListener('mousemove', this.handleMouseMove);
+    document.removeEventListener('mousemove', this.handleMouseMove, true);
     document.removeEventListener('click', this.handleClick, true);
   }
 
   private handleMouseMove = (e: MouseEvent) => {
     if (!this.isActive || this.isPaused || this.isModalOpen) return;
 
-    const target = document.elementFromPoint(e.clientX, e.clientY);
-    if (!target || target === this.container || target === this.blockOverlay) {
+    let target: HTMLElement | null = null;
+
+    // Use elementFromPoint or e.target
+    const pointElement = document.elementFromPoint(e.clientX, e.clientY);
+    if (pointElement && pointElement !== this.container && pointElement !== this.blockOverlay && !this.shadowRoot.contains(pointElement)) {
+      target = pointElement instanceof HTMLElement ? pointElement : pointElement.parentElement;
+    }
+
+    if (!target && e.target && e.target !== this.container && !this.shadowRoot.contains(e.target as Node)) {
+      target = e.target instanceof HTMLElement ? e.target : (e.target as any)?.parentElement;
+    }
+
+    if (!target || target === document.body || target === document.documentElement) {
       this.hoverBox.hide();
       this.targetElement = null;
       return;
     }
 
-    // Check if target is inside our shadow DOM
-    if (this.shadowRoot.contains(target)) {
-      return;
-    }
-
-    if (target instanceof HTMLElement) {
-      this.hoverBox.show(target);
-      this.targetElement = target;
-    }
+    this.hoverBox.show(target);
+    this.targetElement = target;
   };
 
   private handleResize = () => {
@@ -135,17 +151,21 @@ export class Overlay {
     const target = e.target as HTMLElement;
 
     // Check if click is inside our shadow DOM (toolbar, markers, etc.)
-    // When clicking an element inside Shadow DOM, the event target is retargeted to the host (this.container)
     if (this.shadowRoot.contains(target) || target === this.container) {
       return;
     }
 
-    // Check if clicking on the block overlay or if blocking is enabled
-    // We prioritize feedback selection over blocking
-    if (this.targetElement) {
+    // Determine click target
+    let clickTarget = this.targetElement;
+    if (!clickTarget && target && target !== document.body && target !== document.documentElement) {
+      clickTarget = target instanceof HTMLElement ? target : (target as any)?.parentElement;
+    }
+
+    if (clickTarget) {
       e.preventDefault();
       e.stopPropagation();
-      this.promptForFeedback(this.targetElement);
+      e.stopImmediatePropagation();
+      this.promptForFeedback(clickTarget);
       return;
     }
 
@@ -155,9 +175,6 @@ export class Overlay {
       e.stopImmediatePropagation();
       return;
     }
-
-    // Default behavior for non-target clicks when blocking is disabled
-    // (do nothing, let event propagate)
   };
 
   private async promptForFeedback(element: HTMLElement) {
@@ -270,6 +287,7 @@ export class Overlay {
 
   activate() {
     this.isActive = true;
+    this.setupEventListeners();
     const mountTarget = document.documentElement || document.body;
     mountTarget.appendChild(this.container);
     window.addEventListener('resize', this.handleResize);
@@ -298,6 +316,7 @@ export class Overlay {
     this.toolbar.setPaused(this.isPaused);
     if (this.isPaused) {
       this.hoverBox.hide();
+      this.targetElement = null;
     }
   }
 
