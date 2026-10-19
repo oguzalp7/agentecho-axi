@@ -45,6 +45,26 @@ def set_active_project(project_path: Path):
     ACTIVE_PROJECT_FILE.write_text(str(project_path.resolve()))
 
 
+def find_project_from_url(page_url: str) -> Optional[Path]:
+    """Resolves local project by looking up the PID listening on the URL's port."""
+    try:
+        from urllib.parse import urlparse
+        parsed = urlparse(page_url)
+        port = parsed.port or (80 if parsed.scheme == "http" else 443)
+        if port and parsed.hostname in ("localhost", "127.0.0.1", "0.0.0.0"):
+            res = subprocess.run(["lsof", f"-i:{port}", "-sTCP:LISTEN", "-t"], capture_output=True, text=True)
+            pids = res.stdout.strip().split()
+            for pid in pids:
+                cwd_link = Path(f"/proc/{pid}/cwd")
+                if cwd_link.exists():
+                    resolved = cwd_link.resolve()
+                    if (resolved / ".git").exists() or (resolved / "package.json").exists():
+                        return resolved
+    except Exception as e:
+        log_message(f"Could not resolve project from URL: {e}")
+    return None
+
+
 def find_project_for_filepath(file_path_str: str) -> Optional[Path]:
     """Attempts to match a source file path (e.g. src/components/Header.tsx) to a project in /home/oguz."""
     clean_path = file_path_str.split(":")[0].strip()
@@ -148,14 +168,20 @@ class BridgeHandler(BaseHTTPRequestHandler):
                 self.wfile.write(json.dumps({"success": True, "received": 0, "message": "No feedbacks to sync"}).encode("utf-8"))
                 return
 
-            # Determine target project
-            target_proj = self.server_project or get_active_project()
-            if not target_proj:
+            # Determine target project (Priority: 1. URL port process CWD, 2. filePath match, 3. active/server project)
+            target_proj = None
+            if page_url:
+                target_proj = find_project_from_url(page_url)
+                if target_proj:
+                    log_message(f"Auto-resolved target project from URL {page_url} -> {target_proj}")
+
+            if not target_proj and feedbacks:
                 first_fp = feedbacks[0].get("element", {}).get("component", {}).get("filePath", "")
                 if first_fp:
                     target_proj = find_project_for_filepath(first_fp)
+
             if not target_proj:
-                target_proj = Path.cwd()
+                target_proj = self.server_project or get_active_project() or Path.cwd()
 
             # Store in target project inbox
             inbox_dir = target_proj / ".edge" / "inbox"
@@ -273,15 +299,48 @@ def ingest_queue(project_path: Path):
     for item in queue:
         feedback_id = item.get("id", "unknown")
         action = item.get("action", "modify").lower()
-        component_name = item.get("element", {}).get("component", {}).get("name", "UnknownComponent")
+        component_name = item.get("element", {}).get("component", {}).get("name")
+        text_content = item.get("element", {}).get("textContent", "").strip()
+        tag_name = item.get("element", {}).get("tagName", "elem").lower()
         file_path = item.get("element", {}).get("component", {}).get("filePath", "unknown")
         comment = item.get("comment", "").strip() or ("Remove component" if action == "remove" else "Modify component")
         selector = item.get("element", {}).get("selector", "")
 
-        # Clean component name for slug
-        safe_comp = "".join(c for c in component_name if c.isalnum() or c in ("-", "_")).lower() or "elem"
+        # Smart label resolution when React Fiber didn't return a named component
+        import re
+        if not component_name or component_name == "UnknownComponent":
+            if text_content:
+                clean_label = re.split(r'[₺$€0-9\n\r]', text_content)[0].strip()
+                component_name = clean_label if len(clean_label) >= 3 else text_content[:25].strip()
+            else:
+                classes = item.get("element", {}).get("classes", [])
+                meaningful = [c for c in classes if not c.startswith(("p-", "m-", "w-", "h-", "bg-", "text-", "dark:", "sm:", "flex", "grid", "border", "rounded", "shadow"))]
+                component_name = meaningful[0] if meaningful else tag_name
+
+        # Source file discovery if unknown
+        if not file_path or file_path == "unknown":
+            if text_content:
+                clean_search = re.split(r'[₺$€0-9\n\r]', text_content)[0].strip()
+                if clean_search and len(clean_search) >= 3:
+                    try:
+                        grep_res = subprocess.run(
+                            ["grep", "-rn", "-m", "1", clean_search, "src/", "app/"],
+                            cwd=str(project_path),
+                            capture_output=True,
+                            text=True,
+                        )
+                        if grep_res.returncode == 0 and grep_res.stdout:
+                            first_line = grep_res.stdout.strip().split("\n")[0]
+                            parts = first_line.split(":")
+                            file_path = f"{parts[0]}:{parts[1]}"
+                    except Exception:
+                        pass
+
+        # Normalized slug
+        tr_map = str.maketrans("çğışöüÇĞİŞÖÜ", "cgisouCGISOU")
+        safe_comp = "".join(c for c in component_name if c.isalnum() or c in ("-", "_")).translate(tr_map).lower() or tag_name
         short_id = feedback_id[:6]
-        slug = f"ae-{action}-{safe_comp}-{short_id}"
+        slug = f"ae-{action}-{safe_comp[:20]}-{short_id}"
 
         # 1. Write formal Spec contract under .edge/specs/<slug>.md
         spec_content = f"""# 🎯 AXI-FEEDBACK DIRECTIVE: `{slug}`
