@@ -120,6 +120,15 @@ export class Overlay {
     }
   };
 
+  private handleScroll = () => {
+    if (this.isActive && !this.isPaused) {
+      this.markerManager.updatePositions(this.feedbackManager.getAll());
+      if (this.targetElement) {
+        this.hoverBox.show(this.targetElement);
+      }
+    }
+  };
+
   private handleClick = (e: MouseEvent) => {
     if (!this.isActive || this.isPaused || this.isModalOpen) return;
 
@@ -261,8 +270,10 @@ export class Overlay {
 
   activate() {
     this.isActive = true;
-    document.body.appendChild(this.container);
+    const mountTarget = document.documentElement || document.body;
+    mountTarget.appendChild(this.container);
     window.addEventListener('resize', this.handleResize);
+    window.addEventListener('scroll', this.handleScroll, { passive: true });
     // Initial update to fix position if layout changed since save
     requestAnimationFrame(() => {
       try {
@@ -277,6 +288,7 @@ export class Overlay {
     this.isActive = false;
     this.removeEventListeners();
     window.removeEventListener('resize', this.handleResize);
+    window.removeEventListener('scroll', this.handleScroll);
     this.container.remove();
     sendMessage({ type: 'SET_STATE', state: { isActive: false } }).catch(console.error);
   }

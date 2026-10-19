@@ -1,6 +1,7 @@
 import { Overlay } from './overlay/Overlay';
 import { FeedbackManager } from './feedback/FeedbackManager';
 import { getSettings, getFeedback } from '../shared/storage';
+import { sendMessage } from '../shared/messaging';
 
 let overlay: Overlay | null = null;
 let feedbackManager: FeedbackManager | null = null;
@@ -9,13 +10,19 @@ let currentUrl: string = window.location.href;
 async function initializeOverlay() {
   if (overlay) return;
 
-  const settings = await getSettings();
-  const feedback = await getFeedback(window.location.href);
+  try {
+    console.log('[AgentEcho-AXI] Initializing overlay on:', window.location.href);
+    const settings = await getSettings();
+    const feedback = await getFeedback(window.location.href);
 
-  currentUrl = window.location.href;
-  feedbackManager = new FeedbackManager(currentUrl, feedback);
-  overlay = new Overlay(settings, feedbackManager);
-  overlay.activate();
+    currentUrl = window.location.href;
+    feedbackManager = new FeedbackManager(currentUrl, feedback);
+    overlay = new Overlay(settings, feedbackManager);
+    overlay.activate();
+    console.log('[AgentEcho-AXI] Overlay activated! Toolbar and hover highlights ready.');
+  } catch (err) {
+    console.error('[AgentEcho-AXI] Failed to initialize overlay:', err);
+  }
 }
 
 function deactivateOverlay() {
@@ -89,11 +96,14 @@ function setupUrlMonitoring() {
 chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
   switch (message.type) {
     case 'ACTIVATE_OVERLAY':
-      initializeOverlay();
-      break;
+      console.log('[AgentEcho-AXI] Received ACTIVATE_OVERLAY message');
+      initializeOverlay().then(() => sendResponse({ success: true }));
+      return true;
     case 'DEACTIVATE_OVERLAY':
+      console.log('[AgentEcho-AXI] Received DEACTIVATE_OVERLAY message');
       deactivateOverlay();
-      break;
+      sendResponse({ success: true });
+      return true;
     case 'TOGGLE_MARKERS':
       overlay?.toggleMarkers();
       break;
@@ -172,3 +182,15 @@ document.addEventListener('keydown', (e) => {
 
 // Setup URL monitoring for SPA navigation detection
 setupUrlMonitoring();
+
+// Check if extension was already activated for this tab (auto-activate on page refresh/load)
+sendMessage({ type: 'GET_STATE' })
+  .then((state: any) => {
+    if (state && state.isActive) {
+      console.log('[AgentEcho-AXI] Auto-activating overlay based on existing tab state');
+      initializeOverlay();
+    }
+  })
+  .catch(() => {
+    // Background not listening yet or extension inactive
+  });

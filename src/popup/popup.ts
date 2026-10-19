@@ -61,10 +61,29 @@ toggleBtn?.addEventListener('click', async () => {
   isActive = response.isActive;
   updateToggleButton();
 
+  const noticeId = 'agentecho-tab-notice';
+  const existingNotice = document.getElementById(noticeId);
+  if (existingNotice) existingNotice.remove();
+
   if (isActive) {
-    chrome.tabs.sendMessage(currentTabId, { type: 'ACTIVATE_OVERLAY' });
+    chrome.tabs.sendMessage(currentTabId, { type: 'ACTIVATE_OVERLAY' }, (_res) => {
+      if (chrome.runtime.lastError) {
+        console.warn('Tab message failed:', chrome.runtime.lastError.message);
+        const notice = document.createElement('div');
+        notice.id = noticeId;
+        notice.style.color = '#fbbf24';
+        notice.style.fontSize = '12px';
+        notice.style.marginTop = '10px';
+        notice.style.textAlign = 'center';
+        notice.style.lineHeight = '1.4';
+        notice.innerHTML = '⚠️ Sekmeye ulaşılamadı.<br><b>Next.js sayfasını yenileyin (F5).</b>';
+        toggleBtn.parentElement?.appendChild(notice);
+      }
+    });
   } else {
-    chrome.tabs.sendMessage(currentTabId, { type: 'DEACTIVATE_OVERLAY' });
+    chrome.tabs.sendMessage(currentTabId, { type: 'DEACTIVATE_OVERLAY' }, () => {
+      void chrome.runtime.lastError;
+    });
   }
 });
 
