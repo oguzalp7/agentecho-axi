@@ -146,37 +146,39 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
 document.addEventListener('keydown', (e) => {
   if (!overlay?.isActive) return;
 
+  // Don't intercept shortcuts when user is typing in inputs or textareas
+  const isTyping =
+    document.activeElement?.tagName === 'INPUT' ||
+    document.activeElement?.tagName === 'TEXTAREA' ||
+    (document.activeElement as HTMLElement)?.isContentEditable;
+
+  if (isTyping) return;
+
   if (e.key === 'Escape') {
     deactivateOverlay();
+    return;
   }
 
   if (e.ctrlKey || e.metaKey) {
     if (e.shiftKey && e.key.toLowerCase() === 'a') {
       e.preventDefault();
       deactivateOverlay();
+      return;
     }
   }
 
-  if (e.key.toLowerCase() === 'c' && !e.ctrlKey && !e.metaKey) {
-    e.preventDefault();
-    const markdown = feedbackManager?.toMarkdown();
-    if (markdown) {
-      navigator.clipboard.writeText(markdown);
-      alert('Feedback copied to clipboard!');
-    }
-  }
-
-  if (e.key.toLowerCase() === 'h') {
+  // Alt+H: Toggle markers
+  if (e.altKey && e.key.toLowerCase() === 'h') {
     e.preventDefault();
     overlay?.toggleMarkers();
+    return;
   }
 
-  if (e.key === 'Delete' || e.key === 'Backspace') {
-    if (document.activeElement?.tagName !== 'INPUT' && document.activeElement?.tagName !== 'TEXTAREA') {
-      e.preventDefault();
-      feedbackManager?.clearAll();
-      overlay?.clearAllMarkers();
-    }
+  // Alt+C: Copy feedback
+  if (e.altKey && e.key.toLowerCase() === 'c') {
+    e.preventDefault();
+    overlay?.copyFeedback();
+    return;
   }
 });
 

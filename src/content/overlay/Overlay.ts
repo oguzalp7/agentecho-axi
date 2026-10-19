@@ -2,6 +2,7 @@ import { HoverBox } from './HoverBox';
 import { MarkerManager } from './MarkerManager';
 import { Toolbar } from './Toolbar';
 import { FeedbackModal } from './FeedbackModal';
+import { Toast } from './Toast';
 import { ElementAnalyzer } from '../analyzers/ElementAnalyzer';
 import type { ExtensionSettings, FeedbackItem } from '../../shared/types';
 import type { FeedbackManager } from '../feedback/FeedbackManager';
@@ -53,6 +54,7 @@ export class Overlay {
   private hoverBox: HoverBox;
   private markerManager: MarkerManager;
   private toolbar: Toolbar;
+  private toast: Toast;
   private feedbackModal: FeedbackModal;
   private elementAnalyzer: ElementAnalyzer;
   private feedbackManager: FeedbackManager;
@@ -82,6 +84,7 @@ export class Overlay {
       onDelete: (id) => this.handleDeleteFeedback(id),
     });
     this.toolbar = new Toolbar(this.shadowRoot, settings);
+    this.toast = new Toast(this.shadowRoot);
     this.feedbackModal = new FeedbackModal(this.shadowRoot);
     this.elementAnalyzer = new ElementAnalyzer();
 
@@ -324,12 +327,35 @@ export class Overlay {
     this.markersVisible = !this.markersVisible;
     this.markerManager.setVisible(this.markersVisible);
     this.toolbar.setMarkersVisible(this.markersVisible);
+    if (this.markersVisible) {
+      this.markerManager.updatePositions(this.feedbackManager.getAll());
+      this.toast.show('👁️ Rozetler görünür yapıldı.', { type: 'info', duration: 1500 });
+    } else {
+      this.toast.show('👁️ Rozetler gizlendi.', { type: 'info', duration: 1500 });
+    }
   }
 
   async copyFeedback() {
+    const items = this.feedbackManager.getAll();
+    if (items.length === 0) {
+      this.toast.show('⚠️ Kopyalanacak herhangi bir feedback bulunamadı.', { type: 'warning', duration: 2500 });
+      return;
+    }
+
     const markdown = this.feedbackManager.toMarkdown();
     await navigator.clipboard.writeText(markdown);
     this.toolbar.showCopySuccess();
+
+    this.toast.show(`📋 ${items.length} adet AXI direktifi panoya kopyalandı!`, {
+      type: 'success',
+      action: {
+        label: '🗑️ İşaretleri Temizle',
+        onClick: () => {
+          this.clearAll();
+        },
+      },
+      duration: 6000,
+    });
 
     if (this.settings.clearAfterCopy) {
       this.clearAll();
@@ -337,8 +363,14 @@ export class Overlay {
   }
 
   clearAll() {
+    const count = this.feedbackManager.getAll().length;
     this.feedbackManager.clearAll();
     this.markerManager.clearAll();
+    if (count > 0) {
+      this.toast.show(`🗑️ ${count} adet feedback temizlendi.`, { type: 'info', duration: 2500 });
+    } else {
+      this.toast.show('✨ Zaten temizlenecek feedback yok.', { type: 'info', duration: 1500 });
+    }
   }
 
   clearAllMarkers() {

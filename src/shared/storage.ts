@@ -5,7 +5,8 @@ const SETTINGS_KEY = 'agentecho_settings';
 export function getStorageKeyForUrl(url: string): string {
   try {
     const urlObj = new URL(url);
-    return `agentecho_feedback_${urlObj.origin}${urlObj.pathname}`;
+    const normalizedPath = urlObj.pathname.length > 1 ? urlObj.pathname.replace(/\/+$/, '') : urlObj.pathname;
+    return `agentecho_feedback_${urlObj.origin}${normalizedPath}`;
   } catch {
     return `agentecho_feedback_${url}`;
   }

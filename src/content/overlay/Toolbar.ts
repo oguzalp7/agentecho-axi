@@ -78,6 +78,10 @@ const ICONS = {
 
 export class Toolbar {
   private element: HTMLElement;
+  private pauseBtn!: HTMLButtonElement;
+  private eyeBtn!: HTMLButtonElement;
+  private copyBtn!: HTMLButtonElement;
+  private clearBtn!: HTMLButtonElement;
 
   onPauseToggle?: () => void;
   onMarkersToggle?: () => void;
@@ -150,39 +154,38 @@ export class Toolbar {
     const toolbar = document.createElement('div');
     toolbar.className = 'agentecho-toolbar';
 
-    const pauseBtn = this.createButton('pause', 'Pause');
-    pauseBtn.onclick = () => {
+    this.pauseBtn = this.createButton('pause', 'Durdur / Devam Et (Pause/Play)');
+    this.pauseBtn.onclick = () => {
       this.onPauseToggle?.();
     };
 
-    const eyeBtn = this.createButton('eye', 'Toggle markers');
-    eyeBtn.classList.add('active');
-    eyeBtn.onclick = () => {
+    this.eyeBtn = this.createButton('eye', 'Rozetleri Göster/Gizle (Toggle Markers)');
+    this.eyeBtn.classList.add('active');
+    this.eyeBtn.onclick = () => {
       this.onMarkersToggle?.();
     };
 
     const divider1 = document.createElement('div');
     divider1.className = 'agentecho-toolbar-divider';
 
-    const copyBtn = this.createButton('copy', 'Copy to clipboard');
-    copyBtn.onclick = () => this.onCopy?.();
+    this.copyBtn = this.createButton('copy', 'AXI Direktiflerini Kopyala (Copy AXI Directives)');
+    this.copyBtn.onclick = () => this.onCopy?.();
 
-    const clearBtn = this.createButton('trash', 'Clear all');
-    clearBtn.onclick = () => this.onClear?.();
+    this.clearBtn = this.createButton('trash', 'Tüm İşaretleri Temizle (Clear All)');
+    this.clearBtn.onclick = () => {
+      this.showClearFeedback();
+      this.onClear?.();
+    };
 
     const divider2 = document.createElement('div');
     divider2.className = 'agentecho-toolbar-divider';
 
-    // const exitBtn = this.createButton('exit', 'Exit');
-    // exitBtn.onclick = () => this.onExit?.();
-
-    toolbar.appendChild(pauseBtn);
-    toolbar.appendChild(eyeBtn);
+    toolbar.appendChild(this.pauseBtn);
+    toolbar.appendChild(this.eyeBtn);
     toolbar.appendChild(divider1);
-    toolbar.appendChild(copyBtn);
-    toolbar.appendChild(clearBtn);
+    toolbar.appendChild(this.copyBtn);
+    toolbar.appendChild(this.clearBtn);
     toolbar.appendChild(divider2);
-    // toolbar.appendChild(exitBtn);
 
     return toolbar;
   }
@@ -196,35 +199,41 @@ export class Toolbar {
   }
 
   setPaused(paused: boolean) {
-    const pauseBtn = this.element.querySelector('.agentecho-toolbar-btn:first-child') as HTMLButtonElement;
-    if (pauseBtn) {
-      pauseBtn.innerHTML = paused ? ICONS.play : ICONS.pause;
-      pauseBtn.title = paused ? 'Resume' : 'Pause';
+    if (this.pauseBtn) {
+      this.pauseBtn.innerHTML = paused ? ICONS.play : ICONS.pause;
+      this.pauseBtn.title = paused ? 'Devam Et (Resume)' : 'Durdur (Pause)';
     }
   }
 
   setMarkersVisible(visible: boolean) {
-    const eyeBtn = this.element.querySelector('.agentecho-toolbar-btn:nth-child(2)') as HTMLButtonElement;
-    if (eyeBtn) {
-      eyeBtn.innerHTML = visible ? ICONS.eye : ICONS.eyeOff;
+    if (this.eyeBtn) {
+      this.eyeBtn.innerHTML = visible ? ICONS.eye : ICONS.eyeOff;
       if (visible) {
-        eyeBtn.classList.add('active');
+        this.eyeBtn.classList.add('active');
       } else {
-        eyeBtn.classList.remove('active');
+        this.eyeBtn.classList.remove('active');
       }
     }
   }
 
   showCopySuccess() {
-    const copyBtn = this.element.querySelector('.agentecho-toolbar-btn:nth-child(4)') as HTMLButtonElement;
-    if (copyBtn) {
-      const originalIcon = copyBtn.innerHTML;
-      copyBtn.innerHTML = ICONS.check;
-      copyBtn.style.background = '#22c55e';
+    if (this.copyBtn) {
+      const originalIcon = this.copyBtn.innerHTML;
+      this.copyBtn.innerHTML = ICONS.check;
+      this.copyBtn.style.background = '#22c55e';
       setTimeout(() => {
-        copyBtn.innerHTML = originalIcon;
-        copyBtn.style.background = '';
+        this.copyBtn.innerHTML = originalIcon;
+        this.copyBtn.style.background = '';
       }, 1500);
+    }
+  }
+
+  showClearFeedback() {
+    if (this.clearBtn) {
+      this.clearBtn.style.background = '#ef4444';
+      setTimeout(() => {
+        this.clearBtn.style.background = '';
+      }, 500);
     }
   }
 }

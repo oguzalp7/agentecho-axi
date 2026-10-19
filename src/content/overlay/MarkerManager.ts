@@ -7,9 +7,11 @@ export interface MarkerCallbacks {
 
 const MARKER_STYLES = (color: string) => `
   .agentecho-markers-container {
-    position: absolute;
+    position: fixed;
     top: 0;
     left: 0;
+    width: 100vw;
+    height: 100vh;
     pointer-events: none;
     z-index: 2147483645;
   }
@@ -179,17 +181,29 @@ export class MarkerManager {
   }
 
   addMarker(feedback: FeedbackItem) {
-    const rect = feedback.element.boundingRect;
-    const scrollTop = window.pageYOffset || document.documentElement.scrollTop;
-    const scrollLeft = window.pageXOffset || document.documentElement.scrollLeft;
+    let rect = feedback.element.boundingRect;
+
+    // Try to locate and tag target element in the live DOM
+    try {
+      let el: Element | null = null;
+      if (feedback.element.selector) {
+        el = document.querySelector(feedback.element.selector);
+      }
+      if (el) {
+        el.setAttribute('data-agentecho-target', feedback.id);
+        rect = el.getBoundingClientRect();
+      }
+    } catch {
+      // Keep original rect
+    }
 
     const isRemove = feedback.action === 'remove';
     const marker = document.createElement('div');
     marker.className = 'agentecho-marker';
     marker.dataset.feedbackId = feedback.id;
     marker.textContent = feedback.index.toString();
-    marker.style.top = `${rect.top + scrollTop - 14}px`;
-    marker.style.left = `${rect.left + scrollLeft + rect.width / 2 - 14}px`;
+    marker.style.top = `${rect.top - 14}px`;
+    marker.style.left = `${rect.left + rect.width / 2 - 14}px`;
     marker.style.backgroundColor = isRemove ? '#dc2626' : (this.settings.markerColor || '#2563eb');
 
     // Create popup container
@@ -235,12 +249,18 @@ export class MarkerManager {
     popup.appendChild(actions);
     marker.appendChild(popup);
 
+    const isOutOfBounds = rect.bottom < 0 || rect.top > window.innerHeight;
+    if (isOutOfBounds || !this.visible) {
+      marker.style.display = 'none';
+      if (!this.visible) {
+        marker.classList.add('hidden');
+      }
+    } else {
+      marker.style.display = 'flex';
+    }
+
     this.container.appendChild(marker);
     this.markers.set(feedback.id, { element: marker, commentEl, badgeEl });
-
-    if (!this.visible) {
-      marker.classList.add('hidden');
-    }
   }
 
   updateMarkerTooltip(id: string, newComment: string, action?: 'modify' | 'remove') {
@@ -257,6 +277,14 @@ export class MarkerManager {
   }
 
   removeMarker(id: string) {
+    try {
+      const el = document.querySelector(`[data-agentecho-target="${id}"]`);
+      if (el) {
+        el.removeAttribute('data-agentecho-target');
+      }
+    } catch {
+      // Ignore
+    }
     const markerData = this.markers.get(id);
     if (markerData) {
       markerData.element.remove();
@@ -265,41 +293,59 @@ export class MarkerManager {
   }
 
   clearAll() {
+    try {
+      document.querySelectorAll('[data-agentecho-target]').forEach((el) => {
+        el.removeAttribute('data-agentecho-target');
+      });
+    } catch {
+      // Ignore
+    }
     this.markers.forEach(({ element }) => element.remove());
     this.markers.clear();
   }
 
   setVisible(visible: boolean) {
     this.visible = visible;
+    this.container.style.display = visible ? 'block' : 'none';
     this.markers.forEach(({ element }) => {
       if (visible) {
         element.classList.remove('hidden');
       } else {
         element.classList.add('hidden');
+        element.style.display = 'none';
       }
     });
   }
 
   updatePositions(feedbackItems: FeedbackItem[]) {
-    const scrollTop = window.pageYOffset || document.documentElement.scrollTop;
-    const scrollLeft = window.pageXOffset || document.documentElement.scrollLeft;
-
-    feedbackItems.forEach(item => {
+    feedbackItems.forEach((item) => {
       const markerData = this.markers.get(item.id);
       if (!markerData) return;
 
       let rect = item.element.boundingRect;
       try {
-        const currentElement = document.querySelector(item.element.selector);
-        if (currentElement) {
-          rect = currentElement.getBoundingClientRect();
+        let el: Element | null = document.querySelector(`[data-agentecho-target="${item.id}"]`);
+        if (!el && item.element.selector) {
+          el = document.querySelector(item.element.selector);
+          if (el) {
+            el.setAttribute('data-agentecho-target', item.id);
+          }
         }
-      } catch (e) {
+        if (el) {
+          rect = el.getBoundingClientRect();
+        }
+      } catch {
         // Ignore selector errors, keep original rect
       }
 
-      markerData.element.style.top = `${rect.top + scrollTop - 14}px`;
-      markerData.element.style.left = `${rect.left + scrollLeft + rect.width / 2 - 14}px`;
+      const isOutOfBounds = rect.bottom < 0 || rect.top > window.innerHeight;
+      if (isOutOfBounds || !this.visible) {
+        markerData.element.style.display = 'none';
+      } else {
+        markerData.element.style.display = 'flex';
+        markerData.element.style.top = `${rect.top - 14}px`;
+        markerData.element.style.left = `${rect.left + rect.width / 2 - 14}px`;
+      }
     });
   }
 
