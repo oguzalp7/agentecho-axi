@@ -49,11 +49,37 @@ def find_project_from_url(page_url: str) -> Optional[Path]:
     """Resolves local project by looking up the PID listening on the URL's port."""
     try:
         from urllib.parse import urlparse
+        import re
         parsed = urlparse(page_url)
         port = parsed.port or (80 if parsed.scheme == "http" else 443)
         if port and parsed.hostname in ("localhost", "127.0.0.1", "0.0.0.0"):
-            res = subprocess.run(["lsof", f"-i:{port}", "-sTCP:LISTEN", "-t"], capture_output=True, text=True)
-            pids = res.stdout.strip().split()
+            pids = []
+            # 1. Try fuser (primary for WSL2: fast, doesn't require root for user processes)
+            try:
+                res_fuser = subprocess.run(["fuser", f"{port}/tcp"], capture_output=True, text=True)
+                pids.extend([p for p in res_fuser.stdout.replace(":", " ").split() if p.isdigit()])
+            except Exception:
+                pass
+
+            # 2. Try ss -tulpn (parsing pid=XXXX)
+            if not pids:
+                try:
+                    res_ss = subprocess.run(["ss", "-tulpn"], capture_output=True, text=True)
+                    for line in res_ss.stdout.splitlines():
+                        if f":{port} " in line or f":{port}\t" in line:
+                            m = re.findall(r'pid=(\d+)', line)
+                            pids.extend(m)
+                except Exception:
+                    pass
+
+            # 3. Try lsof as fallback
+            if not pids:
+                try:
+                    res_lsof = subprocess.run(["lsof", f"-i:{port}", "-sTCP:LISTEN", "-t"], capture_output=True, text=True)
+                    pids.extend([p for p in res_lsof.stdout.strip().split() if p.isdigit()])
+                except Exception:
+                    pass
+
             for pid in pids:
                 cwd_link = Path(f"/proc/{pid}/cwd")
                 if cwd_link.exists():
@@ -181,7 +207,10 @@ class BridgeHandler(BaseHTTPRequestHandler):
                     target_proj = find_project_for_filepath(first_fp)
 
             if not target_proj:
-                target_proj = self.server_project or get_active_project() or Path.cwd()
+                target_proj = get_active_project() or self.server_project or Path.cwd()
+
+            if target_proj:
+                set_active_project(target_proj)
 
             # Store in target project inbox
             inbox_dir = target_proj / ".edge" / "inbox"
